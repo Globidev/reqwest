@@ -107,6 +107,41 @@ impl Default for Client {
     }
 }
 
+use wasm_bindgen::{prelude::*, JsCast};
+
+thread_local! {
+    static GLOBAL_WEB_CONTEXT: WebContext = WebContext::new();
+}
+
+#[derive(Debug)]
+enum WebContext {
+    Window(web_sys::Window),
+    Worker(web_sys::WorkerGlobalScope),
+}
+
+impl WebContext {
+    fn new() -> Self {
+        #[wasm_bindgen]
+        extern "C" {
+            type Global;
+
+            #[wasm_bindgen(method, getter, js_name = Window)]
+            fn window(this: &Global) -> JsValue;
+
+            #[wasm_bindgen(method, getter, js_name = WorkerGlobalScope)]
+            fn worker(this: &Global) -> JsValue;
+        }
+
+        let global: Global = js_sys::global().unchecked_into();
+
+        if !global.window().is_undefined() {
+            Self::Window(global.unchecked_into())
+        } else if !global.worker().is_undefined() {
+            Self::Worker(global.unchecked_into())
+        } else {
+            panic!("Only supported in a browser or web worker");
+        }
+
 async fn fetch(req: Request) -> crate::Result<Response> {
     // Build the js Request
     let mut init = web_sys::RequestInit::new();
@@ -143,9 +178,13 @@ async fn fetch(req: Request) -> crate::Result<Response> {
         .map_err(crate::error::builder)?;
 
     // Await the fetch() promise
-    let p = web_sys::window()
-        .expect("window should exist")
-        .fetch_with_request(&js_req);
+    let p = GLOBAL_WEB_CONTEXT.with(|g| {
+        match g {
+            WebContext::Window(w) => w.fetch_with_request(&js_req),
+            WebContext::Worker(w) => w.fetch_with_request(&js_req),
+        }
+    });
+
     let js_resp = super::promise::<web_sys::Response>(p)
         .await
         .map_err(crate::error::request)?;
@@ -186,11 +225,5 @@ impl ClientBuilder {
     /// dox
     pub fn build(self) -> Result<Client, crate::Error> {
         Ok(Client(()))
-    }
-}
-
-impl Default for ClientBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
