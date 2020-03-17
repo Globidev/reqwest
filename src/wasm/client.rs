@@ -141,6 +141,8 @@ impl WebContext {
         } else {
             panic!("Only supported in a browser or web worker");
         }
+    }
+}
 
 async fn fetch(req: Request) -> crate::Result<Response> {
     // Build the js Request
